@@ -176,7 +176,16 @@ export function downloadImage(url: string, filename: string) {
 }
 
 // Generate analytics image
-export function generateAnalyticsImage(stats: any): Promise<string> {
+export function generateAnalyticsImage(stats: {
+  totalMessages: string
+  totalReactions: string
+  averageReactions: string
+  responseRate: string
+  publicMessages: string
+  privateMessages: string
+  unreadMessages: string
+  mostPopularReaction: string
+}): Promise<string> {
   return new Promise((resolve) => {
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")!
@@ -238,24 +247,24 @@ export function generateAnalyticsImage(stats: any): Promise<string> {
     }
 
     // Draw stats in a 2x3 grid
-    drawStatBox(margin, startY, "Total Messages", stats.totalMessages || "0", "#FF6B6B")
-    drawStatBox(canvas.width - margin - boxWidth, startY, "Total Reactions", stats.totalReactions || "0", "#4ECDC4")
+    drawStatBox(margin, startY, "Total Messages", stats.totalMessages, "#FF6B6B")
+    drawStatBox(canvas.width - margin - boxWidth, startY, "Total Reactions", stats.totalReactions, "#4ECDC4")
 
-    drawStatBox(margin, startY + boxHeight + 20, "Average Reactions", stats.averageReactions || "0", "#FFD166")
+    drawStatBox(margin, startY + boxHeight + 20, "Average Reactions", stats.averageReactions, "#FFD166")
     drawStatBox(
       canvas.width - margin - boxWidth,
       startY + boxHeight + 20,
-      "Most Popular Reaction",
-      stats.mostPopularReaction || "❤️",
+      "Response Rate",
+      stats.responseRate,
       "#F72585",
     )
 
-    drawStatBox(margin, startY + (boxHeight + 20) * 2, "Peak Hour", stats.peakHour || "N/A", "#7209B7")
+    drawStatBox(margin, startY + (boxHeight + 20) * 2, "Public Messages", stats.publicMessages, "#7209B7")
     drawStatBox(
       canvas.width - margin - boxWidth,
       startY + (boxHeight + 20) * 2,
-      "Response Rate",
-      stats.responseRate || "0%",
+      "Private Messages",
+      stats.privateMessages,
       "#4361EE",
     )
 

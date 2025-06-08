@@ -9,9 +9,11 @@ import { Switch } from "@/components/ui/switch"
 import { MessageCircle, ArrowLeft, Sparkles, Clock, Shield, Globe } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { generateUserId, generateUsername, setCookie } from "@/lib/utils"
-import { saveUserSession, type User, type UserSession } from "@/lib/mock-data"
+import { generateUsername, setCookie } from "@/lib/utils"
+import { type User, type UserSession } from "@/lib/mock-data"
 import { PinLock } from "@/components/pin-lock"
+import { createUser } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 export default function CreateAccountPage() {
   const [username, setUsername] = useState("")
@@ -20,9 +22,9 @@ export default function CreateAccountPage() {
   const [isSettingPin, setIsSettingPin] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
+  const { toast } = useToast()
 
   useEffect(() => {
-    // Generate a random username on load
     setUsername(generateUsername())
   }, [])
 
@@ -30,72 +32,51 @@ export default function CreateAccountPage() {
     if (!username.trim()) return
 
     setIsLoading(true)
+    try {
+      const user = await createUser(username.trim(), usePin, isPublic)
+      
+      // Save user ID in cookie
+      setCookie("ast-secret-user-id", user.id, 24)
 
-    // Simulate account creation
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const userId = generateUserId()
-    const now = new Date()
-    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
-    const user: User = {
-      id: userId,
-      username: username.trim(),
-      avatar: `/placeholder.svg?height=80&width=80`,
-      link: `${window.location.origin}/u/${username.trim()}`,
-      messageCount: 0,
-      createdAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      isPublic: isPublic,
+      if (usePin) {
+        setIsSettingPin(true)
+      } else {
+        router.push("/dashboard")
+      }
+    } catch (error) {
+      console.error('Failed to create account:', error)
+      toast({
+        title: "Error",
+        description: "Failed to create account. Please try again.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsLoading(false)
     }
-
-    const session: UserSession = {
-      user,
-      messages: [],
-    }
-
-    // Save session
-    saveUserSession(session)
-    setCookie("ast-secret-user-id", userId, 24)
-
-    if (usePin) {
-      setIsSettingPin(true)
-    } else {
-      router.push("/dashboard")
-    }
-
-    setIsLoading(false)
   }
 
-  const handleSetPin = (pin: string) => {
-    const userId = generateUserId()
-    const now = new Date()
-    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
-    const user: User = {
-      id: userId,
-      username: username.trim(),
-      avatar: `/placeholder.svg?height=80&width=80`,
-      link: `${window.location.origin}/u/${username.trim()}`,
-      messageCount: 0,
-      pin: pin,
-      createdAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      isPublic: isPublic,
+  const handleSetPin = async (pin: string) => {
+    try {
+      const user = await createUser(username.trim(), true, isPublic)
+      setCookie("ast-secret-user-id", user.id, 24)
+      router.push("/dashboard")
+    } catch (error) {
+      console.error('Failed to create account with PIN:', error)
+      toast({
+        title: "Error",
+        description: "Failed to set PIN. Please try again.",
+        variant: "destructive"
+      })
     }
+  }
 
-    const session: UserSession = {
-      user,
-      messages: [],
-    }
-
-    saveUserSession(session)
-    setCookie("ast-secret-user-id", userId, 24)
-    router.push("/dashboard")
+  const handlePinUnlock = (pin: string) => {
+    // This is just a placeholder since we're setting the PIN, not unlocking
+    handleSetPin(pin)
   }
 
   if (isSettingPin) {
-    return <PinLock onSetPin={handleSetPin} isSettingPin={true} title="Set Your PIN" />
+    return <PinLock onSetPin={handleSetPin} onUnlock={handlePinUnlock} isSettingPin={true} title="Set Your PIN" />
   }
 
   return (

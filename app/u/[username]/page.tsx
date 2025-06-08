@@ -1,71 +1,117 @@
 "use client"
 
-import type React from "react"
-
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { MessageCircle, Send, Lock, Share2, Copy, Heart, Sparkles, ArrowRight, Flame, Laugh } from "lucide-react"
-import { mockUser, getCookie, getUserSession, type UserSession, mockMessages, type Message } from "@/lib/mock-data"
+import { getCookie, type Message } from "@/lib/mock-data"
 import { useToast } from "@/hooks/use-toast"
 import { PinLock } from "@/components/pin-lock"
 import Link from "next/link"
+import { getUser, getMessages, sendMessage, addReaction, getUserByUsername } from "@/lib/api"
+import { logger } from "@/lib/logger"
+import { use } from "react"
 
-export default function PublicSubmissionPage({ params }: { params: { username: string } }) {
+interface PageProps {
+  params: Promise<{ username: string }>;
+}
+
+export default function PublicSubmissionPage({ params }: PageProps) {
+  // Unwrap the params Promise
+  const { username } = use(params);
+  
   const [message, setMessage] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
-  const [targetUser, setTargetUser] = useState<UserSession | null>(null)
+  const [targetUser, setTargetUser] = useState<any>(null)
   const [isOwnProfile, setIsOwnProfile] = useState(false)
   const [needsPin, setNeedsPin] = useState(false)
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [publicMessages, setPublicMessages] = useState<Message[]>([])
-  const { toast } = useToast()
   const [userNotFound, setUserNotFound] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const { toast } = useToast()
 
   useEffect(() => {
-    // Check if this is the user's own profile
-    const currentUserId = getCookie("ast-secret-user-id")
-    if (currentUserId) {
-      const currentSession = getUserSession(currentUserId)
-      if (currentSession && currentSession.user.username === params.username) {
-        setIsOwnProfile(true)
-        setTargetUser(currentSession)
-        if (currentSession.user.pin) {
-          setNeedsPin(true)
+    async function loadUser() {
+      try {
+        logger.info('Loading user profile', { username });
+        
+        // Get user data
+        const user = await getUserByUsername(username);
+        logger.debug('User data fetched', { user });
+        setTargetUser(user);
+
+        // Check if this is the user's own profile
+        const currentUserId = getCookie("ast-secret-user-id");
+        logger.debug('Checking profile ownership', { currentUserId, userId: user.id });
+        
+        if (currentUserId && user.id === currentUserId) {
+          setIsOwnProfile(true);
+          if (user.usePin) {
+            setNeedsPin(true);
+          } else {
+            setIsUnlocked(true);
+          }
         } else {
-          setIsUnlocked(true)
+          setIsUnlocked(true);
         }
-        return
+
+        // Get messages if public or if own profile and unlocked
+        if (user.isPublic || (isOwnProfile && isUnlocked)) {
+          logger.debug('Fetching messages', { isPublic: user.isPublic, isOwnProfile, isUnlocked });
+          const messages = await getMessages(user.id);
+          setPublicMessages(messages.filter(msg => msg.isPublic || isOwnProfile));
+        }
+      } catch (error: any) {
+        logger.error('Failed to load user profile', { 
+          username,
+          error: error.message,
+          response: error.response
+        });
+        
+        setUserNotFound(true);
+        
+        // Extract error message from response if available
+        let errorMessage = 'The user doesn\'t exist or their account may have expired.';
+        try {
+          if (error instanceof Error) {
+            errorMessage = error.message;
+          }
+        } catch (e) {
+          logger.error('Error parsing error message', { error: e });
+        }
+        
+        setErrorMessage(errorMessage);
+      } finally {
+        setIsLoading(false);
       }
     }
 
-    // Check if username exists (in real app, this would be an API call)
-    if (params.username === "yourusername" || params.username === "DemoUser123") {
-      const mockSession = {
-        user: { ...mockUser, username: params.username },
-        messages: mockMessages,
-      }
-      setTargetUser(mockSession)
+    loadUser();
+  }, [username, isOwnProfile, isUnlocked]);
 
-      // Filter public messages
-      const publicMsgs = mockMessages.filter((msg) => msg.isPublic)
-      setPublicMessages(publicMsgs)
-
-      setIsUnlocked(true)
-    } else {
-      // User not found
-      setUserNotFound(true)
-    }
-  }, [params.username])
-
-  const handlePinUnlock = (pin: string) => {
-    if (targetUser?.user.pin === pin) {
+  const handlePinUnlock = async (pin: string) => {
+    if (targetUser?.pin === pin) {
       setIsUnlocked(true)
       setNeedsPin(false)
+      
+      // Load messages after unlocking
+      try {
+        const messages = await getMessages(targetUser.id)
+        setPublicMessages(messages)
+      } catch (error) {
+        console.error('Failed to load messages:', error)
+        toast({
+          title: "Error",
+          description: "Failed to load messages. Please try again.",
+          variant: "destructive"
+        })
+      }
     } else {
       toast({
         title: "Incorrect PIN",
@@ -89,12 +135,12 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
 
           <Card className="border-0 bg-white/80 backdrop-blur-sm fun-shadow">
             <CardContent className="p-8 text-center">
-              <div className="w-16 h-16 bg-gradient-to-r from-gray-300 to-gray-400 rounde-full flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 bg-gradient-to-r from-gray-300 to-gray-400 rounded-full flex items-center justify-center mx-auto mb-4">
                 <MessageCircle className="w-8 h-8 text-white" />
               </div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">User Not Found</h3>
               <p className="text-gray-600 mb-6">
-                The user @{params.username} doesn't exist or their account may have expired.
+                {errorMessage || `The user @${username} doesn't exist or their account may have expired.`}
               </p>
               <div className="space-y-3">
                 <Link href="/create">
@@ -119,7 +165,7 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
     return <PinLock onUnlock={handlePinUnlock} title="Enter PIN to view messages" />
   }
 
-  if (!targetUser) {
+  if (isLoading || !targetUser) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-cyan-100 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
@@ -133,28 +179,27 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
 
     setIsSubmitting(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    try {
+      await sendMessage(targetUser.id, message.trim(), targetUser.isPublic)
+      setSubmitted(true)
+      setMessage("")
 
-    // Add message to target user's session (in real app, this would be server-side)
-    const newMessage = {
-      content: message.trim(),
-      timestamp: "just now",
-      reactions: { heart: 0, fire: 0, laugh: 0 },
-      isRead: false,
-      isPublic: targetUser.user.isPublic,
+      toast({
+        title: "Message sent! 🎉",
+        description: "Your anonymous message has been delivered.",
+      })
+
+      setTimeout(() => setSubmitted(false), 3000)
+    } catch (error) {
+      console.error('Failed to send message:', error)
+      toast({
+        title: "Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmitting(false)
     }
-
-    setIsSubmitting(false)
-    setSubmitted(true)
-    setMessage("")
-
-    toast({
-      title: "Message sent! 🎉",
-      description: "Your anonymous message has been delivered.",
-    })
-
-    setTimeout(() => setSubmitted(false), 3000)
   }
 
   const handleShare = () => {
@@ -165,19 +210,25 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
     })
   }
 
-  const handleReaction = (messageId: string, reaction: "heart" | "fire" | "laugh") => {
-    setPublicMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === messageId
-          ? { ...msg, reactions: { ...msg.reactions, [reaction]: msg.reactions[reaction] + 1 } }
-          : msg,
-      ),
-    )
+  const handleReaction = async (messageId: string, reaction: "heart" | "fire" | "laugh") => {
+    try {
+      const updatedMessage = await addReaction(messageId, targetUser.id, reaction)
+      setPublicMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? updatedMessage : msg))
+      )
 
-    toast({
-      title: "Reaction added! ❤️",
-      description: "Your reaction has been saved.",
-    })
+      toast({
+        title: "Reaction added! ❤️",
+        description: "Your reaction has been saved.",
+      })
+    } catch (error) {
+      console.error('Failed to add reaction:', error)
+      toast({
+        title: "Error",
+        description: "Failed to add reaction. Please try again.",
+        variant: "destructive"
+      })
+    }
   }
 
   return (
@@ -201,9 +252,9 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
           <CardHeader className="text-center pb-4">
             <div className="relative mx-auto mb-4">
               <Avatar className="w-20 h-20 border-4 border-white shadow-lg">
-                <AvatarImage src={mockUser.avatar || "/placeholder.svg"} alt={mockUser.username} />
+                <AvatarImage src={targetUser.avatar || "/placeholder.svg"} alt={targetUser.username} />
                 <AvatarFallback className="bg-gradient-to-r from-pink-500 to-purple-600 text-white text-2xl font-bold">
-                  {mockUser.username.charAt(0).toUpperCase()}
+                  {targetUser.username.charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-2 border-white flex items-center justify-center">
@@ -211,10 +262,10 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
               </div>
             </div>
             <h1 className="text-2xl font-bold text-gray-800 mb-2">Send a message to</h1>
-            <p className="text-xl font-semibold gradient-text">@{params.username}</p>
-            <p className="text-sm text-gray-600 mt-2">{mockUser.messageCount} messages received</p>
+            <p className="text-xl font-semibold gradient-text">@{username}</p>
+            <p className="text-sm text-gray-600 mt-2">{publicMessages.length} messages received</p>
             <div className="flex justify-center mt-2">
-              {targetUser.user.isPublic ? (
+              {targetUser.isPublic ? (
                 <Badge className="bg-gradient-to-r from-blue-400 to-blue-600 text-white border-0">
                   🌐 Public Profile
                 </Badge>
@@ -228,23 +279,9 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
         </Card>
 
         {/* Message Form */}
-        <Card className="border-0 bg-white/80 backdrop-blur-sm fun-shadow mb-6">
+        <Card className="mb-6 border-0 bg-white/80 backdrop-blur-sm fun-shadow">
           <CardContent className="p-6">
-            {isOwnProfile ? (
-              <div className="text-center py-8">
-                <div className="w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <MessageCircle className="w-8 h-8 text-white" />
-                </div>
-                <h3 className="text-2xl font-bold text-gray-800 mb-2">This is your profile! 👋</h3>
-                <p className="text-gray-600 mb-4">Share this link to receive anonymous messages.</p>
-                <Link href="/dashboard">
-                  <Button className="bg-gradient-to-r from-pink-500 to-purple-600 text-white">
-                    View Your Messages
-                    <ArrowRight className="ml-2 w-4 h-4" />
-                  </Button>
-                </Link>
-              </div>
-            ) : !submitted ? (
+            {!submitted ? (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="relative">
                   <Textarea
@@ -284,96 +321,61 @@ export default function PublicSubmissionPage({ params }: { params: { username: s
                 <p className="text-gray-600">Your anonymous message has been delivered successfully.</p>
               </div>
             )}
-
-            <div className="flex items-center justify-center space-x-2 mt-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg">
-              <Lock className="w-4 h-4 text-purple-600" />
-              <span className="text-sm text-purple-700 font-medium">🔒 100% Anonymous. We never store your data.</span>
-            </div>
           </CardContent>
         </Card>
 
         {/* Public Messages */}
-        {targetUser.user.isPublic && publicMessages.length > 0 && !isOwnProfile && (
-          <Card className="border-0 bg-white/80 backdrop-blur-sm fun-shadow mb-6">
-            <CardHeader>
-              <h3 className="text-xl font-bold text-gray-800 text-center">Public Messages</h3>
-              <p className="text-sm text-gray-600 text-center">See what others are saying</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {publicMessages.slice(0, 5).map((msg) => (
-                <div key={msg.id} className="p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg">
+        {targetUser.isPublic && publicMessages.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-gray-800">Public Messages</h2>
+              <Button variant="ghost" size="sm" onClick={handleShare}>
+                <Share2 className="w-4 h-4 mr-2" />
+                Share
+              </Button>
+            </div>
+
+            {publicMessages.map((msg) => (
+              <Card key={msg.id} className="border-0 bg-white/80 backdrop-blur-sm fun-shadow">
+                <CardContent className="p-4">
                   <p className="text-gray-800 mb-3">{msg.content}</p>
-
-                  {msg.reply && (
-                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-3 rounded-lg border-l-4 border-purple-400 mb-3">
-                      <p className="text-xs text-gray-500 mb-1">Reply:</p>
-                      <p className="text-gray-800 text-sm">{msg.reply}</p>
-                    </div>
-                  )}
-
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-500">{msg.timestamp}</span>
-                    <div className="flex items-center space-x-1">
+                    <div className="flex items-center space-x-2">
                       <Button
-                        size="sm"
                         variant="ghost"
+                        size="sm"
+                        className="hover:text-pink-600"
                         onClick={() => handleReaction(msg.id, "heart")}
-                        className="h-7 px-2 hover:bg-pink-100 text-pink-600"
                       >
-                        <Heart className="w-3 h-3 mr-1" />
+                        <Heart className="w-4 h-4 mr-1" />
                         {msg.reactions.heart}
                       </Button>
                       <Button
-                        size="sm"
                         variant="ghost"
+                        size="sm"
+                        className="hover:text-orange-600"
                         onClick={() => handleReaction(msg.id, "fire")}
-                        className="h-7 px-2 hover:bg-orange-100 text-orange-600"
                       >
-                        <Flame className="w-3 h-3 mr-1" />
+                        <Flame className="w-4 h-4 mr-1" />
                         {msg.reactions.fire}
                       </Button>
                       <Button
-                        size="sm"
                         variant="ghost"
+                        size="sm"
+                        className="hover:text-yellow-600"
                         onClick={() => handleReaction(msg.id, "laugh")}
-                        className="h-7 px-2 hover:bg-yellow-100 text-yellow-600"
                       >
-                        <Laugh className="w-3 h-3 mr-1" />
+                        <Laugh className="w-4 h-4 mr-1" />
                         {msg.reactions.laugh}
                       </Button>
                     </div>
+                    <span className="text-sm text-gray-500">{msg.timestamp}</span>
                   </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         )}
-
-        {/* Share Section */}
-        <Card className="border-0 bg-white/80 backdrop-blur-sm">
-          <CardContent className="p-4">
-            <div className="text-center">
-              <p className="text-sm text-gray-600 mb-3">Want your own anonymous link?</p>
-              <div className="flex space-x-2">
-                <Button
-                  onClick={handleShare}
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 border-purple-300 text-purple-700 hover:bg-purple-50"
-                >
-                  <Copy className="w-4 h-4 mr-1" />
-                  Copy Link
-                </Button>
-                <Link href="/create" className="flex-1">
-                  <Button size="sm" className="w-full bg-gradient-to-r from-pink-500 to-purple-600 text-white">
-                    <Share2 className="w-4 h-4 mr-1" />
-                    Get Yours
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   )
