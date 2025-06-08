@@ -9,6 +9,7 @@ export interface Message {
   }
   isRead: boolean
   reply?: string
+  replyTimestamp?: string
   isPublic?: boolean
 }
 

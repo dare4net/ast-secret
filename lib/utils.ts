@@ -46,6 +46,7 @@ export function generateMessageImage(
   username: string,
   timestamp: string,
   reply?: string,
+  reactions?: { heart: number; fire: number; laugh: number }
 ): Promise<string> {
   return new Promise((resolve) => {
     const canvas = document.createElement("canvas")
@@ -55,39 +56,54 @@ export function generateMessageImage(
     canvas.width = 600
     canvas.height = reply ? 500 : 400
 
-    // Create gradient background
+    // Create gradient background (matching app style)
     const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
-    gradient.addColorStop(0, "#ff6b6b")
-    gradient.addColorStop(0.5, "#4ecdc4")
-    gradient.addColorStop(1, "#45b7d1")
+    gradient.addColorStop(0, "#fce7f3") // pink-100
+    gradient.addColorStop(0.5, "#f3e8ff") // purple-50
+    gradient.addColorStop(1, "#cffafe") // cyan-100
 
+    // Fill background
     ctx.fillStyle = gradient
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Add semi-transparent overlay
-    ctx.fillStyle = "rgba(255, 255, 255, 0.1)"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Set text properties
-    ctx.fillStyle = "white"
-    ctx.textAlign = "center"
-    ctx.textBaseline = "middle"
-
+    // Draw elevated white card with shadow
+    const cardMargin = 40
+    const cardWidth = canvas.width - (cardMargin * 2)
+    const cardHeight = canvas.height - (cardMargin * 2)
+    
+    // Draw card shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.1)'
+    ctx.shadowBlur = 20
+    ctx.shadowOffsetX = 0
+    ctx.shadowOffsetY = 4
+    
+    // Draw white card background
+    ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
+    ctx.fillRect(cardMargin, cardMargin, cardWidth, cardHeight)
+    
+    // Reset shadow
+    ctx.shadowColor = 'transparent'
+    ctx.shadowBlur = 0
+    
     // Draw logo/title
+    ctx.fillStyle = "#6b21a8" // purple-800
+    ctx.textAlign = "center"
     ctx.font = "bold 24px Poppins, sans-serif"
-    ctx.fillText("ast-secret", canvas.width / 2, 60)
+    ctx.fillText("ast-secret", canvas.width / 2, cardMargin + 40)
 
     // Draw username
     ctx.font = "18px Poppins, sans-serif"
-    ctx.fillText(`@${username}`, canvas.width / 2, 90)
+    ctx.fillStyle = "#9333ea" // purple-600
+    ctx.fillText(`@${username}`, canvas.width / 2, cardMargin + 70)
 
     // Draw message (with text wrapping)
-    ctx.font = "20px Poppins, sans-serif"
-    const maxWidth = canvas.width - 80
+    ctx.font = "bold 20px Poppins, sans-serif"
+    ctx.fillStyle = "#1f2937" // gray-800
+    const maxWidth = cardWidth - 60
     const lineHeight = 30
     const words = message.split(" ")
     let line = ""
-    let y = 180
+    let y = cardMargin + 140
 
     for (let n = 0; n < words.length; n++) {
       const testLine = line + words[n] + " "
@@ -103,33 +119,54 @@ export function generateMessageImage(
     }
     ctx.fillText(line, canvas.width / 2, y)
 
+    // Draw reactions if they exist
+    if (reactions) {
+      const reactionY = y + 40
+      ctx.font = "16px Poppins, sans-serif"
+      ctx.fillStyle = "#6b7280" // gray-500
+      
+      // Draw heart reaction
+      if (reactions.heart > 0) {
+        ctx.fillStyle = "#ec4899" // pink-500
+        ctx.fillText(`❤️ ${reactions.heart}`, canvas.width / 2 - 80, reactionY)
+      }
+      
+      // Draw fire reaction
+      if (reactions.fire > 0) {
+        ctx.fillStyle = "#f97316" // orange-500
+        ctx.fillText(`🔥 ${reactions.fire}`, canvas.width / 2, reactionY)
+      }
+      
+      // Draw laugh reaction
+      if (reactions.laugh > 0) {
+        ctx.fillStyle = "#eab308" // yellow-500
+        ctx.fillText(`😂 ${reactions.laugh}`, canvas.width / 2 + 80, reactionY)
+      }
+      
+      y = reactionY + 20
+    }
+
     // Draw reply if exists
     if (reply) {
       // Draw separator line
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"
+      ctx.strokeStyle = "#e5e7eb" // gray-200
       ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.moveTo(100, y + 50)
-      ctx.lineTo(canvas.width - 100, y + 50)
+      ctx.moveTo(cardMargin + 40, y + 30)
+      ctx.lineTo(canvas.width - cardMargin - 40, y + 30)
       ctx.stroke()
 
       // Draw reply label
       ctx.font = "italic 16px Poppins, sans-serif"
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
-      ctx.fillText("Reply:", canvas.width / 2, y + 80)
-
-      // Draw reply background
-      const replyBgY = y + 110 - 25
-      const replyBgHeight = 80
-      ctx.fillStyle = "rgba(255, 255, 255, 0.2)"
-      ctx.fillRect(50, replyBgY, canvas.width - 100, replyBgHeight)
+      ctx.fillStyle = "#6b7280" // gray-500
+      ctx.fillText("Reply:", canvas.width / 2, y + 60)
 
       // Draw reply text
       ctx.font = "18px Poppins, sans-serif"
-      ctx.fillStyle = "white"
+      ctx.fillStyle = "#374151" // gray-700
       const replyWords = reply.split(" ")
       let replyLine = ""
-      let replyY = y + 110
+      let replyY = y + 90
 
       for (let n = 0; n < replyWords.length; n++) {
         const testLine = replyLine + replyWords[n] + " "
@@ -144,17 +181,12 @@ export function generateMessageImage(
         }
       }
       ctx.fillText(replyLine, canvas.width / 2, replyY)
-
-      // Draw timestamp at the bottom
-      ctx.font = "14px Poppins, sans-serif"
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
-      ctx.fillText(timestamp, canvas.width / 2, canvas.height - 40)
-    } else {
-      // Draw timestamp
-      ctx.font = "14px Poppins, sans-serif"
-      ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
-      ctx.fillText(timestamp, canvas.width / 2, canvas.height - 40)
     }
+
+    // Draw timestamp at the bottom
+    ctx.font = "14px Poppins, sans-serif"
+    ctx.fillStyle = "#9ca3af" // gray-400
+    ctx.fillText(timestamp, canvas.width / 2, canvas.height - cardMargin - 20)
 
     // Convert to blob URL
     canvas.toBlob((blob) => {

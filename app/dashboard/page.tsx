@@ -242,6 +242,7 @@ export default function Dashboard() {
         user.username,
         message.timestamp,
         message.reply,
+        message.reactions
       )
       downloadImage(imageUrl, `message-${message.id}.png`)
 
@@ -274,6 +275,7 @@ export default function Dashboard() {
             user.username,
             message.timestamp,
             message.reply,
+            message.reactions
           )
           downloadImage(imageUrl, `message-${message.id}.png`)
           // Small delay between downloads

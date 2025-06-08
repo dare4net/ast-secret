@@ -1,6 +1,7 @@
 import { logger } from './logger';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ast-secret-backend.onrender.com/api';
+//const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://localhost:5000/api';
 
 export interface Message {
   id: string;
@@ -14,6 +15,7 @@ export interface Message {
   isRead: boolean;
   isPublic: boolean;
   reply?: string;
+  replyTimestamp?: string;
 }
 
 export interface User {
