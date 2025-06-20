@@ -40,7 +40,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getCookie, generateMessageImage, downloadImage, generateAnalyticsImage } from "@/lib/utils"
-import { getUser, getMessages, addReaction, deleteMessage, markMessageAsRead } from "@/lib/api"
+import { getUser, getMessages, addReaction, deleteMessage, markMessageAsRead, replyToMessage } from "@/lib/api"
 import { logger } from "@/lib/logger"
 
 export default function Dashboard() {
@@ -325,7 +325,7 @@ export default function Dashboard() {
 
     try {
       // Assuming there's a reply API endpoint
-      // await replyToMessage(messageId, replyText)
+      await replyToMessage(messageId, user.id, replyText)
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === messageId
@@ -401,7 +401,7 @@ export default function Dashboard() {
         className="container mx-auto px-4 py-8 h-screen overflow-y-auto"
       >
         {/* Pull to refresh indicator */}
-        <div 
+        {/*<div 
           className={`fixed top-0 left-0 right-0 flex items-center justify-center transition-transform duration-300 bg-white/80 backdrop-blur-sm py-2 z-50 ${
             refreshProgress > 0 ? 'translate-y-0' : '-translate-y-full'
           }`}
@@ -414,7 +414,7 @@ export default function Dashboard() {
           <span className="ml-2 text-sm text-purple-600">
             {isRefreshing ? 'Refreshing...' : 'Pull to refresh'}
           </span>
-        </div>
+        </div>*/}
 
         <div className="container mx-auto px-4 py-8">
           {/* Profile Card */}
