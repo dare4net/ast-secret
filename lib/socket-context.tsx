@@ -5,7 +5,7 @@ import io, { Socket } from 'socket.io-client';
 import { useToast } from '@/hooks/use-toast';
 
 const SOCKET_URL = process.env.NODE_ENV === 'production'
-  ? process.env.NEXT_PUBLIC_API_URL // Replace with your production backend URL
+  ? process.env.NEXT_PUBLIC_SOCKET_URL // Replace with your production backend URL
   : 'http://localhost:5000';
 
 interface SocketContextType {
