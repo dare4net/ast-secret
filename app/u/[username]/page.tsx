@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
+import { useSocket } from "@/lib/socket-context"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { MessageCircle, Send, Lock, Share2, Copy, Heart, Sparkles, ArrowRight, Flame, Laugh } from "lucide-react"
@@ -31,13 +32,95 @@ export default function PublicSubmissionPage({ params }: PageProps) {
   const [needsPin, setNeedsPin] = useState(false)
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [publicMessages, setPublicMessages] = useState<Message[]>([])
+  const [hasMore, setHasMore] = useState(true)
+  const [page, setPage] = useState(1)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [userNotFound, setUserNotFound] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [stats, setStats] = useState({
+    linkClicks: 0,
+    activeReaders: 0
+  })
   const { toast } = useToast()
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [reply, setReply] = useState("")
   const [isSubmittingReply, setIsSubmittingReply] = useState(false)
+  const [clickedLink, setClickedLink] = useState(false)
+  const { socket } = useSocket()
+
+  useEffect(() => {
+    if (socket && targetUser?.id && !clickedLink) {
+      socket.emit('linkClicked', targetUser.id);
+      setClickedLink(true);
+    }
+  }, [socket, targetUser, clickedLink])
+
+
+  useEffect(() => {
+    if (!socket || !targetUser) return;
+
+    // Handle real-time message updates
+    const onNewMessage = ({ message, messageCount }: {message: Message, messageCount: number}) => {
+      // Only add message if it's for this user and if public or if own profile and unlocked
+      if (message.isPublic || (isOwnProfile && isUnlocked)) {
+        setPublicMessages(prev => [message, ...prev]);
+      }
+      if (targetUser) {
+        setTargetUser(prev => ({...prev, messageCount}));
+      }
+    };
+
+    const onNewReply = ({ messageId, reply, replyTimestamp }: {messageId: string, reply: string, replyTimestamp: string}) => {
+      setPublicMessages(prev => prev.map(msg => 
+        msg.id === messageId 
+          ? {...msg, reply, replyTimestamp}
+          : msg
+      ));
+    };
+
+    const onNewReaction = ({ messageId, reactions }: {messageId: string, reactions: Message['reactions']}) => {
+      setPublicMessages(prev => prev.map(msg => 
+        msg.id === messageId 
+          ? {...msg, reactions}
+          : msg
+      ));
+    };
+
+    // Subscribe to socket events
+    socket.on('newMessage', onNewMessage);
+    socket.on('newReply', onNewReply);
+    socket.on('newReaction', onNewReaction);
+    socket.on('statsUpdate', ({ linkClicks, activeReaders }) => {
+      setStats({ linkClicks, activeReaders });
+    });
+
+    // Join room for this user's updates
+    socket.emit('join', targetUser.id);
+    
+    // Request initial stats
+    socket.emit('getStats', targetUser.id);
+
+    return () => {
+      // Cleanup socket event listeners when unmounting
+      socket.off('newMessage', onNewMessage);
+      socket.off('newReply', onNewReply);
+      socket.off('newReaction', onNewReaction);
+      socket.off('statsUpdate');
+    };
+  }, [socket, targetUser, isOwnProfile, isUnlocked]);
+
+  // Infinite scroll handler
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 500) {
+        loadMoreMessages();
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [hasMore, isLoadingMore, page]);
 
   useEffect(() => {
     async function loadUser() {
@@ -66,17 +149,33 @@ export default function PublicSubmissionPage({ params }: PageProps) {
 
         // Get messages if public or if own profile and unlocked
         if (user.isPublic || (isOwnProfile && isUnlocked)) {
-          logger.debug('Fetching messages', { isPublic: user.isPublic, isOwnProfile, isUnlocked });
-          const messages = await getMessages(user.id);
+          logger.debug('Fetching initial messages', { isPublic: user.isPublic, isOwnProfile, isUnlocked });
+          const response = await getMessages(user.id, { page: 1, limit: 20 });
+          
+          // Handle both paginated and non-paginated responses
+          let processedMessages: Message[] = [];
+          let isPaginated = false;
+
+          if (response && typeof response === 'object') {
+            if ('data' in response && Array.isArray(response.data)) {
+              processedMessages = response.data;
+              isPaginated = true;
+            } else if (Array.isArray(response)) {
+              processedMessages = response;
+            }
+          }
+          
           // Filter messages and ensure replies are included
-          setPublicMessages(messages
+          const filteredMessages = processedMessages
             .filter(msg => msg.isPublic || isOwnProfile)
             .map(msg => ({
               ...msg,
               reply: msg.reply || null,
               replyTimestamp: msg.replyTimestamp || null
-            }))
-          );
+            }));
+            
+          setPublicMessages(filteredMessages);
+          setHasMore(isPaginated && 'totalPages' in response && typeof response.totalPages === 'number' && response.totalPages > 1);
         }
       } catch (error: any) {
         logger.error('Failed to load user profile', { 
@@ -113,8 +212,30 @@ export default function PublicSubmissionPage({ params }: PageProps) {
       
       // Load messages after unlocking
       try {
-        const messages = await getMessages(targetUser.id)
-        setPublicMessages(messages)
+        const response = await getMessages(targetUser.id, { page: 1, limit: 20 });
+        
+        let processedMessages: Message[] = [];
+        let isPaginated = false;
+
+        if (response && typeof response === 'object') {
+          if ('data' in response && Array.isArray(response.data)) {
+            processedMessages = response.data;
+            isPaginated = true;
+          } else if (Array.isArray(response)) {
+            processedMessages = response;
+          }
+        }
+
+        const filteredMessages = processedMessages
+          .filter(msg => msg.isPublic || isOwnProfile)
+          .map(msg => ({
+            ...msg,
+            reply: msg.reply || null,
+            replyTimestamp: msg.replyTimestamp || null
+          }));
+
+        setPublicMessages(filteredMessages);
+        setHasMore(isPaginated && 'totalPages' in response && typeof response.totalPages === 'number' && response.totalPages > 1);
       } catch (error) {
         console.error('Failed to load messages:', error)
         toast({
@@ -213,8 +334,53 @@ export default function PublicSubmissionPage({ params }: PageProps) {
     }
   }
 
+  const loadMoreMessages = async () => {
+    if (!hasMore || isLoadingMore) return;
+    
+    setIsLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const response = await getMessages(targetUser.id, { page: nextPage, limit: 20 });
+      
+      let processedMessages: Message[] = [];
+      let isPaginated = false;
+
+      if (response && typeof response === 'object') {
+        if ('data' in response && Array.isArray(response.data)) {
+          processedMessages = response.data;
+          isPaginated = true;
+        } else if (Array.isArray(response)) {
+          processedMessages = response;
+        }
+      }
+
+      const newMessages = processedMessages
+        .filter(msg => msg.isPublic || isOwnProfile)
+        .map(msg => ({
+          ...msg,
+          reply: msg.reply || null,
+          replyTimestamp: msg.replyTimestamp || null
+        }));
+
+      setPublicMessages(prev => [...prev, ...newMessages]);
+      setPage(nextPage);
+      setHasMore(isPaginated && 'totalPages' in response && typeof response.totalPages === 'number' && response.totalPages > nextPage);
+    } catch (error) {
+      console.error('Failed to load more messages:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load more messages. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   const handleShare = () => {
     navigator.clipboard.writeText(window.location.href)
+    // Emit link click event
+    socket?.emit('linkClicked', targetUser.id);
     toast({
       title: "Link copied!",
       description: "Share this link to receive more messages.",
@@ -224,9 +390,7 @@ export default function PublicSubmissionPage({ params }: PageProps) {
   const handleReaction = async (messageId: string, reaction: "heart" | "fire" | "laugh") => {
     try {
       const updatedMessage = await addReaction(messageId, targetUser.id, reaction)
-      setPublicMessages((prev) =>
-        prev.map((msg) => (msg.id === messageId ? updatedMessage : msg))
-      )
+      // The socket will handle updating the UI when the server confirms the reaction
 
       toast({
         title: "Reaction added! ❤️",
@@ -247,16 +411,8 @@ export default function PublicSubmissionPage({ params }: PageProps) {
 
     setIsSubmittingReply(true)
     try {
-      const updatedMessage = await replyToMessage(messageId, targetUser.id, reply.trim())
-      // Ensure we preserve all message fields and properly update the reply
-      setPublicMessages((prev) =>
-        prev.map((msg) => msg.id === messageId ? {
-          ...msg,
-          ...updatedMessage,
-          reply: updatedMessage.reply || null,
-          replyTimestamp: updatedMessage.replyTimestamp || null
-        } : msg)
-      )
+      await replyToMessage(messageId, targetUser.id, reply.trim())
+      // The socket will handle updating the UI when the server confirms the reply
 
       toast({
         title: "Reply sent! 💬",
@@ -309,8 +465,8 @@ export default function PublicSubmissionPage({ params }: PageProps) {
             </div>
             <h1 className="text-2xl font-bold text-gray-800 mb-2">Send a message to</h1>
             <p className="text-xl font-semibold gradient-text">@{username}</p>
-            <p className="text-sm text-gray-600 mt-2">{publicMessages.length} messages received</p>
-            <div className="flex justify-center mt-2">
+            <p className="text-sm text-gray-600 mt-2">{targetUser.messageCount} messages received</p>
+            <div className="flex flex-wrap justify-center gap-2 mt-2">
               {targetUser.isPublic ? (
                 <Badge className="bg-gradient-to-r from-blue-400 to-blue-600 text-white border-0">
                   🌐 Public Profile
@@ -320,6 +476,12 @@ export default function PublicSubmissionPage({ params }: PageProps) {
                   🔒 Private Profile
                 </Badge>
               )}
+              <Badge variant="secondary" className="bg-white/50">
+                👁 {stats.activeReaders} reading now
+              </Badge>
+              <Badge variant="secondary" className="bg-white/50">
+                🔗 {stats.linkClicks} link shares
+              </Badge>
             </div>
           </CardHeader>
         </Card>
@@ -414,7 +576,7 @@ export default function PublicSubmissionPage({ params }: PageProps) {
         )}
 
         {/* Public Messages */}
-        {targetUser.isPublic && publicMessages.length > 0 && (
+        {targetUser.isPublic && (publicMessages.length > 0 || isLoadingMore) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-800">Public Messages</h2>
@@ -424,13 +586,22 @@ export default function PublicSubmissionPage({ params }: PageProps) {
               </Button>
             </div>
 
-            {publicMessages.map((msg) => (
+            {publicMessages.map((msg, index) => (
               <Card key={msg.id} className="border-0 bg-white/80 backdrop-blur-sm fun-shadow">
                 <CardContent className="p-4">
                   {/* Message Content */}
                   <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg mb-3">
                     <p className="text-gray-800 text-lg font-medium">{msg.content}</p>
                   </div>
+
+                  {/* Last Message Indicator */}
+                  {!hasMore && index === publicMessages.length - 1 && (
+                    <div className="text-center py-2 mb-3">
+                      <Badge variant="secondary" className="bg-white/50">
+                        ✨ You've reached the last message
+                      </Badge>
+                    </div>
+                  )}
 
                   {/* Reply Section */}
                   {msg.reply ? (
@@ -562,6 +733,30 @@ export default function PublicSubmissionPage({ params }: PageProps) {
                 </CardContent>
               </Card>
             ))}
+
+            {/* Loading More Indicator */}
+            {isLoadingMore && (
+              <div className="text-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+                <p className="text-sm text-gray-500 mt-2">Loading more messages...</p>
+              </div>
+            )}
+
+            {publicMessages.length === 0 && !isLoadingMore && (
+              <Card className="border-0 bg-white/80 backdrop-blur-sm fun-shadow">
+                <CardContent className="p-8 text-center">
+                  <div className="w-16 h-16 bg-gradient-to-r from-gray-300 to-gray-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <MessageCircle className="w-8 h-8 text-white" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-800 mb-2">No Messages Yet</h3>
+                  <p className="text-gray-600 mb-6">Share your link to start receiving messages!</p>
+                  <Button onClick={handleShare} className="bg-gradient-to-r from-pink-500 to-purple-600 text-white">
+                    <Share2 className="w-4 h-4 mr-2" />
+                    Share Your Link
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
       </div>

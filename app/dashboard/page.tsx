@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [replyText, setReplyText] = useState("")
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [activeTab, setActiveTab] = useState<"messages" | "analytics">("messages")
   const [refreshStartY, setRefreshStartY] = useState(0)
@@ -68,12 +69,30 @@ export default function Dashboard() {
         logger.info('Loading user data', { userId })
         const userData = await getUser(userId)
         setUser(userData)
-        const userMessages = await getMessages(userId)
-        setMessages(userMessages)
-        logger.debug('User data loaded', { messageCount: userMessages.length })
+        
+        const response = await getMessages(userId)
+        // Handle both paginated and non-paginated responses
+        let processedMessages: Message[] = [];
+        
+        if (response && typeof response === 'object') {
+          if ('data' in response && Array.isArray(response.data)) {
+            processedMessages = response.data;
+          } else if (Array.isArray(response)) {
+            processedMessages = response;
+          } else {
+            throw new Error('Invalid message data format');
+          }
+        }
+        
+        setMessages(processedMessages);
+        logger.debug('User data loaded', { messageCount: processedMessages.length })
       } catch (error) {
         logger.error('Failed to load user data', { error })
-        window.location.href = "/create"
+        setError(error instanceof Error ? error.message : 'Failed to load user data')
+        setMessages([]) // Ensure messages is always an array
+        if (!user) {
+          window.location.href = "/create"
+        }
       } finally {
         setIsLoading(false)
         setIsRefreshing(false)
@@ -85,6 +104,46 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadUserData()
+
+    // Handle real-time message updates
+    const handleNewMessage = (event: CustomEvent<{message: Message, messageCount: number}>) => {
+      const { message, messageCount } = event.detail;
+      setMessages(prev => Array.isArray(prev) ? [message, ...prev] : [message]);
+      if (user) {
+        setUser(prev => ({...prev, messageCount}));
+      }
+    };
+
+    const handleNewReply = (event: CustomEvent<{messageId: string, reply: string, replyTimestamp: string}>) => {
+      const { messageId, reply, replyTimestamp } = event.detail;
+      setMessages(prev => {
+        if (!Array.isArray(prev)) return [];
+        return prev.map(msg => 
+          msg.id === messageId 
+            ? {...msg, reply, replyTimestamp}
+            : msg
+        );
+      });
+    };
+
+    const handleNewReaction = (event: CustomEvent<{messageId: string, reactions: Message['reactions']}>) => {
+      const { messageId, reactions } = event.detail;
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId 
+          ? {...msg, reactions}
+          : msg
+      ));
+    };
+
+    window.addEventListener('newMessage', handleNewMessage as EventListener);
+    window.addEventListener('newReply', handleNewReply as EventListener);
+    window.addEventListener('newReaction', handleNewReaction as EventListener);
+
+    return () => {
+      window.removeEventListener('newMessage', handleNewMessage as EventListener);
+      window.removeEventListener('newReply', handleNewReply as EventListener);
+      window.removeEventListener('newReaction', handleNewReaction as EventListener);
+    };
   }, [])
 
   useEffect(() => {
@@ -136,6 +195,26 @@ export default function Dashboard() {
       content.removeEventListener('touchend', handleTouchEnd)
     }
   }, [refreshProgress, isRefreshing])
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-cyan-100 flex items-center justify-center">
+        <Card className="border-0 bg-white/80 backdrop-blur-sm p-6 max-w-md w-full mx-4">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <X className="w-6 h-6 text-red-600" />
+            </div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">Error Loading Data</h2>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()} className="bg-gradient-to-r from-pink-500 to-purple-600 text-white">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Try Again
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   if (isLoading || !user) {
     return (
